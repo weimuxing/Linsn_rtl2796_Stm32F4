@@ -1,0 +1,92 @@
+#include "I2CEEPROM.h"
+#include "systick.h"
+#include "i2c.h"
+
+static BYTE eepromAddr = EEPROM_I2C_ADDRESS;
+
+void setEepromAdr(BYTE addr)
+{
+	eepromAddr = addr;
+}
+void eeprom_write(eepromPort_TypeDef I2CEEPROM_PORTx, u16 address, BYTE * buffer, u16 size)
+{
+	int ucRemainLen = address % EEPROM_WRITE_PAGE;
+	int pageSize;
+	int i;
+	if(ucRemainLen)		
+	{
+		ucRemainLen = EEPROM_WRITE_PAGE - ucRemainLen;
+		if(ucRemainLen < size)
+		{
+			//printf("EEPROM: add=%d, size=%d\r\n", address, ucRemainLen);
+			i2cBurstWriteBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx, eepromAddr, address, buffer, ucRemainLen);
+			SysDelay1ms(EEPROM_WRITE_TIME+1);
+			size -= ucRemainLen;
+			address += ucRemainLen;
+			buffer += ucRemainLen;
+		}
+		else
+		{
+			//printf("EEPROM: add=%d, size=%d\r\n", address, size);
+			i2cBurstWriteBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx,eepromAddr, address, buffer, size);
+			SysDelay1ms(EEPROM_WRITE_TIME+1);
+			return;
+		}
+		
+	}
+	pageSize = size/EEPROM_WRITE_PAGE;
+	for(i=0; i<pageSize; i++)
+	{
+		//printf("EEPROM: add=%d, size=%d\r\n", address, EEPROM_WRITE_PAGE);
+		i2cBurstWriteBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx,eepromAddr, address, buffer, EEPROM_WRITE_PAGE);
+		SysDelay1ms(EEPROM_WRITE_TIME+1);
+		address += EEPROM_WRITE_PAGE;
+		buffer += EEPROM_WRITE_PAGE;
+		size -= EEPROM_WRITE_PAGE;		
+	}
+	if(size)
+	{
+		//printf("EEPROM: add=%d, size=%d\r\n", address, size);
+		i2cBurstWriteBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx,eepromAddr, address, buffer, size);
+		SysDelay1ms(EEPROM_WRITE_TIME+1);
+	}
+}
+void eeprom_read(eepromPort_TypeDef I2CEEPROM_PORTx, u16 address, BYTE * buffer, u16 size)
+{
+	int readPageSize = 256;  // read page size 256
+
+	while(size > readPageSize)
+	{
+		i2cBurstReadBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx,eepromAddr, address, buffer, readPageSize);
+		address += readPageSize;
+		buffer += readPageSize;
+		size -= readPageSize;
+	}
+	if(size)
+	{		
+		i2cBurstReadBytes2((I2CPort_TypeDef)I2CEEPROM_PORTx,eepromAddr, address, buffer, size);
+	}
+}
+
+char CheckEeprom(void)
+{
+	char writeData[16] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10};
+	char receiveData[16],i,res = TRUE;
+	
+	for(i = 0; i < 16; i++)
+	{
+		memset((u8*)receiveData,0,16);
+		eeprom_write((eepromPort_TypeDef)I2C_E,(i*16),writeData,16);
+		eeprom_read((eepromPort_TypeDef)I2C_E,(i*16),receiveData,16);
+		if(memcmp((u8*)receiveData,(u8*)writeData))
+		{
+			printf("Check eeprom error..\r\n");
+			return FALSE;
+		}		
+	}
+	printf("Check eeprom secuss..\r\n");
+	return TRUE;	
+}
+
+
+

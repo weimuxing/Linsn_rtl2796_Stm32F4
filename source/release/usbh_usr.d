@@ -1,0 +1,10 @@
+..\release\usbh_usr.o: ..\usb\usbh_usr.c
+..\release\usbh_usr.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+..\release\usbh_usr.o: ..\usb\usbh_usr.h
+..\release\usbh_usr.o: ..\Libraries\FATFS\src\ff.h
+..\release\usbh_usr.o: ..\Libraries\FATFS\src\integer.h
+..\release\usbh_usr.o: ..\Libraries\FATFS\src\ffconf.h
+..\release\usbh_usr.o: ..\Libraries\STM32_USB_HOST_Library\Core\inc\usbh_core.h
+..\release\usbh_usr.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_hcd.h
+..\release\usbh_usr.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_regs.h
+..\release\usbh_usr.o: ..\usb\usb_conf.h

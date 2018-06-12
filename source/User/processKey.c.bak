@@ -1,0 +1,1025 @@
+#include "SysConfig.h"
+#include "processKey.h"
+#include "keyScan.h"
+#include "LCD.h"
+#include <stdio.h>
+#include "I2CEEPROM.h"
+#include "spi_flash.h"
+#include "systick.h"
+#include "rotaryEncoder.h"
+#include "menu.h"
+#include "menudata.h"
+#include "control.h"
+#include "input.h"
+#include "it6604.h"
+#include "FPGA.h"
+#include "keyBoardStatus.h"
+#include "UartDebug.h"
+
+
+#define _VIDEO_MASSAGE_DEBUG
+
+static char frontType = 0;   					//  0;  	// 2- dvi转成dp,hdmi进矩阵    1- new   0- old
+static char keyTestModeOnOff = 0; 				//  0- 正常按键   1- 测试按键,只在液晶屏显示并长亮按键灯,不执行功能
+static int processKeyEnable = 0;
+extern const char * inputSourceStr_List[];
+extern BYTE checkIsLock(void); 					//added by cyj
+extern u8 takeStatus;
+extern u8 PgmOldInput,PrvOldInput;
+extern u8 PgmCurrentInput,PrvCurrentInput;
+extern u8 PgmCurrentRegion,PrvCurrentRegion;
+extern u8 CurrentDisplayMode;
+static u32 totaryDelay = 100;
+
+void setProcessKeyEnable(int value)
+{
+	if(value > 1)
+	{
+		return;
+	}
+	processKeyEnable = value;
+}
+
+
+int getProcessKeyEnable(void)
+{
+	return processKeyEnable;
+}
+
+
+void setFrontType(char type)  // 2- dvi转成dp,hdmi进矩阵  1- new   0- old
+{
+#if !(CURRENT_DEVICE == _VIP_SMART)
+	if(type > 2)
+	{
+		return;
+	}
+	frontType = type;
+#endif
+}
+
+
+char getFrontType(void)  	// 2- dvi转成dp,hdmi进矩阵    1- new   0- old
+{
+	return frontType;
+}
+
+
+void setTotaryDelay(int delay)
+{
+	;
+}
+
+static u8 task_rotaryEncoder(void)//20111018
+{
+	static u32 readTime = 0;
+	if(isSysTickTimeout(readTime,totaryDelay))
+	{
+		int value = GetpluseValue(pulse_A);
+		
+		readTime = GetSysTick();
+		if(value)
+		{		
+			SetEcInputValueNew();
+			printf("pluseValue = %d\r\n",value);
+			DebugMessageSystem("EcInputCountNew = %d\r\n",GetEcInputValueNew());
+			if(value > 0)
+			{
+				if(value < 2)
+				{
+					//printf("MENU_EVENT_STEP_1\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_1);
+				}
+				else if(value < 3)
+				{
+					//printf("MENU_EVENT_STEP_10\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_10);
+				}
+				else
+				{
+					//printf("MENU_EVENT_STEP_100\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_100);
+				}
+				menuProcessEvent(MENU_KEY_DOWN);
+			}
+			else
+			{
+				if(value > -2)
+				{
+					//printf("MENU_EVENT_STEP_1\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_1);
+				}
+				else if(value > -3)
+				{
+					//printf("MENU_EVENT_STEP_10\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_10);
+				}
+				else
+				{
+					//printf("MENU_EVENT_STEP_100\r\n");
+					menuProcessEvent(MENU_EVENT_STEP_100);
+				}				
+				menuProcessEvent(MENU_KEY_UP);
+			}       
+            return TRUE;
+		}	
+		else
+		{
+			//rotaryStatus = 0;
+		}
+	}
+
+    return FALSE;
+}
+
+
+//bool double_trip_key = false;	//
+#ifdef SUPPORT_DOUBLE_TRIP_KEY
+u8 SdiDoubleKeyCount = 0;
+u8 DviDoubleKeyCount = 0;
+u8 HdmiDoubleKeyCount = 0;
+
+extern u8 sdikeytype;
+extern u8 dvikeytype;
+extern u8 hdmikeytype;
+
+
+//###################################################################################################################################
+//检查按键是双击还是单击
+bool CheckDoubleKey(void)
+{
+	if(sdikeytype != 0 || dvikeytype != 0 || hdmikeytype != 0)
+	{
+		if(sdikeytype == 2)			//双击
+		{
+			sdikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_SDI_TAKE);
+			return true;
+		}
+		else if(sdikeytype == 1)		//单击
+		{
+			sdikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_SDI);
+			return true;
+		}
+		
+		if(dvikeytype == 2)			//双击
+		{
+			dvikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_DVI_TAKE);
+			return true;			
+		}
+		else if(dvikeytype == 1)		//单击
+		{
+			dvikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_DVI);
+			return true;
+		}
+		
+		if(hdmikeytype == 2)			//双击
+		{
+			hdmikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_HDMI_TAKE);
+			return true;
+		}
+		else if(hdmikeytype == 1)		//单击
+		{
+			hdmikeytype = 0;
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_HDMI);
+			return true;
+		}
+	}
+	return false;
+}
+#else
+
+#endif
+
+
+u16 InputSourceToKey(u8 input)
+{
+	switch(input)
+	{
+		case _DP_INPUT:
+			return KEY_DP;
+
+		#ifdef _VGA_INPUT_ENABLE
+		case _VGA_INPUT:
+			#if defined(LING_XIN)
+			return KEY_VGA;
+			#else
+			return KEY_M1;
+			#endif
+		#endif
+		
+		case _HDMI14_INPUT:
+			return KEY_HDMI1;
+		case _HDMI20_INPUT:
+			return KEY_HDMI2;
+		case _DVI_INPUT:
+			return KEY_DVI;
+	}
+	//break;
+	return _HDMI20_INPUT;
+}
+
+u16 Osd1pInputSwitch(u8 input)
+{
+	switch(input)
+	{
+		#ifdef _VGA_INPUT_ENABLE
+		case _VGA_INPUT:
+			return _VGA_INPUT_SOURCE;
+		#endif
+		case _DP_INPUT:
+			return _DP_INPUT_SOURCE;
+		case _HDMI14_INPUT:
+			return _HDMI1_INPUT_COURCE;
+		case _HDMI20_INPUT:
+			return _HDMI2_INPUT_SOURCE;
+		case _DVI_INPUT:
+			return _DVI_INPUT_SOURCE;
+	}
+	return 	_HDMI2_INPUT_SOURCE;
+}
+
+void SetVideoInputSource(EnumDisplayRegion enumRegion,u8 pgmInput,u8 prvInput,u8 input3,u8 input4)
+{
+	char buffer[64];
+
+	if(checkIsLock())
+	{
+		return;
+	}
+
+	disableDispReflrshInputFormat();
+	if((GetPgmCurrentDisplayMode() == _OSD_DM_2P_LR) || (GetPgmCurrentDisplayMode() == _OSD_DM_2P_TB))
+	{
+		if(GetPrvCurrentInput() != prvInput)
+		{
+			SetRegionInputPort(GetPrvCurrentRegion(),prvInput);
+			SetPrvCurrentInput(prvInput);
+			GetUserSettingParam()->userSplitParam.inputSource2 = prvInput;
+			SetInputPortLedStatus(GetPgmCurrentInput(),GetPrvCurrentInput(),GetPgmCurrentDisplayMode());
+		}
+		if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+		{
+			sprintf(
+						buffer, "%-5s %-5s", "PRV:",
+						inputSourceStr_List[InputSourceConv(GetPrvCurrentInput()&0x07)]
+					);
+			LCD_WriteLine2_L(buffer);
+		}
+		SavePanleAndSplitParam();
+	}
+	else if(GetPgmCurrentDisplayMode() == _OSD_DM_2P_SACLE_LR ||
+			GetPgmCurrentDisplayMode() == _OSD_DM_2P_SACLE_TB ||
+			GetPgmCurrentDisplayMode() == _OSD_DM_3P_SACLE_TB ||
+			GetPgmCurrentDisplayMode() == _OSD_DM_2P_TOW_PORT_LR ||
+			GetPgmCurrentDisplayMode() == _OSD_DM_2P_TOW_PORT_TB)
+	{
+		if(GetPgmCurrentInput() != pgmInput)
+		{
+			FPGASetFreeze(1);
+			SetRegionInputPort(GetPgmCurrentRegion(),pgmInput);
+			//SysDelay1ms(100);
+			//SetRegionInputPort(GetPrvCurrentRegion(),pgmInput);
+			SetPgmCurrentInput(pgmInput);
+			GetUserSettingParam()->userSplitParam.inputSource1 = pgmInput;
+			SetInputPortLedStatus(GetPgmCurrentInput(),GetPrvCurrentInput(),GetPgmCurrentDisplayMode());
+			SetKeyLedMode(LED_DVI,LED_OFF_ALWAYS);
+			SetKeyLedMode(LED_HDMI1,LED_OFF_ALWAYS);
+			SetKeyLedMode(LED_HDMI2,LED_OFF_ALWAYS);
+			SetKeyLedMode(LED_DP,LED_OFF_ALWAYS);
+			SetKeyLedMode(LED_VGA,LED_OFF_ALWAYS);
+			SetKeyLedMode(InputSourceToKey(pgmInput),LED_ON_ALWAYS);
+			if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+			{
+				sprintf(
+							buffer, "%-5s %-5s", "PGM:",
+							inputSourceStr_List[InputSourceConv(GetPgmCurrentInput()&0x07)]
+						);
+				LCD_WriteLine1_L(buffer);
+			}
+			SysDelay1ms(2500);
+			FPGASetFreeze(0);
+		}
+		else
+		{
+			if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+			{
+				sprintf(
+							buffer, "%-5s %-5s", "PGM:",
+							inputSourceStr_List[InputSourceConv(GetPgmCurrentInput()&0x07)]
+						);
+				LCD_WriteLine1_L(buffer);
+			}
+		}
+		SavePanleAndSplitParam();
+	}
+	else if(GetPgmCurrentDisplayMode() == _OSD_DM_4P)
+	{
+		SetKeyLedMode(LED_DVI,   LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI1, LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI2, LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_DP,    LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_VGA,    LED_OFF_ALWAYS);
+		SetKeyLedMode(InputSourceToKey(pgmInput),LED_ON_ALWAYS);
+		
+		if(menuIsCurrentPageIndex(MENU_INDEX_4PLT))
+		{
+			Set4PRegionSource(_DISPLAY_RGN_LT,pgmInput);
+			GetPanleAndSplitParamRam()->inputSource1 = pgmInput;
+			menuEnterPage(MENU_INDEX_4PLT);
+		}
+		else if(menuIsCurrentPageIndex(MENU_INDEX_4PLB))
+		{
+			Set4PRegionSource(_DISPLAY_RGN_LB,pgmInput);
+			GetPanleAndSplitParamRam()->inputSource3 = pgmInput;
+			menuEnterPage(MENU_INDEX_4PLB);
+		}
+		else if(menuIsCurrentPageIndex(MENU_INDEX_4PRT))
+		{
+			Set4PRegionSource(_DISPLAY_RGN_RT,pgmInput);
+			GetPanleAndSplitParamRam()->inputSource2 = pgmInput;
+			menuEnterPage(MENU_INDEX_4PRT);
+		}
+		else if(menuIsCurrentPageIndex(MENU_INDEX_4PRB))
+		{
+			Set4PRegionSource(_DISPLAY_RGN_RB,pgmInput);
+			GetPanleAndSplitParamRam()->inputSource4 = pgmInput;
+			menuEnterPage(MENU_INDEX_4PRB);
+		}
+		else 
+		{
+			Set4PRegionSource(enumRegion,pgmInput);
+			switch(enumRegion)
+			{
+				case _DISPLAY_RGN_LT:
+					GetPanleAndSplitParamRam()->inputSource1 = pgmInput;
+				break;
+				case _DISPLAY_RGN_RT:
+					GetPanleAndSplitParamRam()->inputSource2 = pgmInput;
+				break;
+				case _DISPLAY_RGN_LB:
+					GetPanleAndSplitParamRam()->inputSource3 = pgmInput;
+				break;
+				case _DISPLAY_RGN_RB:
+					GetPanleAndSplitParamRam()->inputSource4 = pgmInput;
+				break;
+				default:
+					GetPanleAndSplitParamRam()->inputSource1 = pgmInput;
+				break;
+			}
+		}
+		SetPgmCurrentInput(pgmInput);
+		SavePanleAndSplitParam();
+	}
+	else if(GetPgmCurrentDisplayMode() == _OSD_DM_2P_PIP)
+	{
+		FPGASetFreeze(1);
+		SetKeyLedMode(LED_DVI,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI1,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI2,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_DP,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_VGA,LED_OFF_ALWAYS);
+		if(GetSystemParam()->CurrentWindow == IMAGE_A)
+		{
+			videoSetPipInputSource(enumRegion,pgmInput);
+			SetKeyLedMode(InputSourceToKey(pgmInput),LED_ON_ALWAYS);
+			SetPgmCurrentInput(pgmInput);
+			GetUserSettingParam()->userSplitParam.inputSource1 = pgmInput;
+			if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+			{
+				sprintf(
+							buffer, "%-5s %-5s", "A:",
+							inputSourceStr_List[InputSourceConv(GetPgmCurrentInput()&0x07)]
+						);
+				LCD_WriteLine1_L(buffer);
+			}
+		}
+		else
+		{
+			videoSetPipInputSource(enumRegion,prvInput);
+			SetKeyLedMode(InputSourceToKey(prvInput),LED_ON_ALWAYS);
+			SetPrvCurrentInput(prvInput);
+			GetUserSettingParam()->userSplitParam.inputSource2 = prvInput;
+			if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+			{
+				sprintf(
+							buffer, "%-5s %-5s", "B:",
+							inputSourceStr_List[InputSourceConv(GetPrvCurrentInput()&0x07)]
+						);
+				LCD_WriteLine2_L(buffer);
+			}
+		}
+		SysDelay1ms(2500);
+		FPGASetFreeze(0);
+		SavePanleAndSplitParam();
+	}
+	else
+	{
+		FPGASetFreeze(1);
+		videoSetInputSource(Osd1pInputSwitch(pgmInput));			
+		SetKeyLedMode(LED_DVI,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI1,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_HDMI2,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_DP,LED_OFF_ALWAYS);
+		SetKeyLedMode(LED_VGA,LED_OFF_ALWAYS);
+		SetKeyLedMode(InputSourceToKey(pgmInput),LED_ON_ALWAYS);
+		SetPgmCurrentInput(pgmInput);
+		GetUserSettingParam()->userSplitParam.inputSource1 = pgmInput;
+		SetInputPortLedStatus(GetPgmCurrentInput(),GetPrvCurrentInput(),GetPgmCurrentDisplayMode());
+		if(menuIsCurrentPageIndex(MENU_INDEX_STATUS) == TRUE)
+		{
+			sprintf(
+						buffer, "%-5s %-5s", "PGM:",
+						inputSourceStr_List[InputSourceConv(GetPgmCurrentInput()&0x07)]
+					);
+			LCD_WriteLine1_L(buffer);
+		}
+	}
+	SysDelay1ms(2800);
+	FPGASetFreeze(0);
+	SavePanleAndSplitParam();
+	enableDispReflrshInputFormat();
+}
+
+
+//
+void UpdateInputSource(BYTE sources)
+{
+	if(GetPgmCurrentDisplayMode() == _OSD_DM_2P_PIP)
+	{
+		if(GetSystemParam()->PipLayout < LAYOUT_PBP_LR)
+		{
+			if(GetSystemParam()->CurrentWindow == 0)
+				SetVideoInputSource(_DISPLAY_RGN_MAIN,sources,sources,0,0);
+			else
+				SetVideoInputSource(_DISPLAY_RGN_SUB,sources,sources,0,0);
+		}
+		else
+		{
+			if(GetSystemParam()->PipLayout == LAYOUT_PBP_LR)
+			{
+				if(GetSystemParam()->CurrentWindow == 0)
+					SetVideoInputSource(_DISPLAY_RGN_LEFT,sources,sources,0,0);
+				else
+					SetVideoInputSource(_DISPLAY_RGN_RIGHT,sources,sources,0,0);
+			}
+			else if(GetSystemParam()->PipLayout == LAYOUT_PBP_TB)
+			{
+				if(GetSystemParam()->CurrentWindow == 0)
+					SetVideoInputSource(_DISPLAY_RGN_TOP,sources,sources,0,0);
+				else
+					SetVideoInputSource(_DISPLAY_RGN_BOTTOM,sources,sources,0,0);
+			}
+		}
+	}
+	else
+	{
+		SetVideoInputSource(0,sources,sources,0,0);
+	}
+}
+
+
+void processKey_New(u32 key_value)
+{
+//	BYTE userDefineKey;
+	switch(key_value)
+	{
+		case KEY_MENU:	
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_MENU,LED_ON_ALWAYS);
+			SetCurrentIsEnterNumberFlag(0);
+			menuProcessEvent(MENU_KEY_MENU);
+			enableDispReflrshInputFormat();
+			break;		
+		case KEY_SAVE:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_SAVE);
+			enableDispReflrshInputFormat();
+			break;
+			
+		case KEY_LOAD:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetCurrentEnterNumberStatus(0xff);
+			SetPrvEnterNumberStatus(0xaa);
+			SetKeyLedMode(KEY_LOAD,LED_ON_ALWAYS);
+			SetCurrentIsEnterNumberFlag(0);
+			menuEnterPage(MENU_INDEX_LOAD_FROM);
+			enableDispReflrshInputFormat();
+			break;			
+		case KEY_SPLIT:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_SPLIT,LED_ON_ALWAYS);
+			menuEnterPage(MENU_INDEX_FOUR_PORT_SPLIT);
+			enableDispReflrshInputFormat();
+			break;	
+
+
+
+	//#######################################################
+	//input source 
+		case KEY_DVI:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			#if defined(LING_XIN)
+			menuProcessEvent(MENU_KEY_DVI);
+			#else
+			UpdateInputSource(_DVI_INPUT);
+			#endif
+			enableDispReflrshInputFormat();
+		break;      
+		case KEY_HDMI1:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			#if defined(LING_XIN)
+			menuProcessEvent(MENU_KEY_HDMI1);
+			#else
+			UpdateInputSource(_HDMI14_INPUT);
+			#endif
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_HDMI2:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			#if defined(LING_XIN)
+			menuProcessEvent(MENU_KEY_HDMI2);
+			#else
+			UpdateInputSource(_HDMI20_INPUT);
+			#endif
+		break;				
+		case KEY_DP: 
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			#if defined(LING_XIN)
+			menuProcessEvent(MENU_KEY_DP);
+			#else
+			UpdateInputSource(_DP_INPUT);
+			#endif
+		break;
+		case KEY_VGA: 
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			#if defined(LING_XIN)
+			menuProcessEvent(MENU_KEY_VGA);
+			#else
+			UpdateInputSource(_VGA_INPUT);
+			#endif
+		break;
+	//#######################################################
+		case KEY_SCALE:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_SCALE,LED_ON_ALWAYS);
+			switch(GetPgmCurrentDisplayMode())
+			{
+				case _OSD_DM_1P:
+					menuEnterPage(MENU_INDEX_FIELD_SPLIT);
+				break;
+				case _OSD_DM_2P_PIP:
+					if(GetSystemParam()->CurrentWindow == 0)
+						menuEnterPage(MENU_INDEX_PIPIMAGEA);
+					else
+						menuEnterPage(MENU_INDEX_PIPIMAGEB);
+				break;
+				case _OSD_DM_4P:
+					if(menuIsCurrentPageIndex(MENU_INDEX_4PLT))
+					{
+						menuEnterPage(MENU_INDEX_4PLT);
+					}
+					else if(menuIsCurrentPageIndex(MENU_INDEX_4PLB))
+					{
+						menuEnterPage(MENU_INDEX_4PLB);
+					}
+					else if(menuIsCurrentPageIndex(MENU_INDEX_4PRT))
+					{
+						menuEnterPage(MENU_INDEX_4PRT);
+					}
+					else if(menuIsCurrentPageIndex(MENU_INDEX_4PRB))
+					{
+						menuEnterPage(MENU_INDEX_4PRB);
+					}
+					else
+					{
+						menuEnterPage(MENU_INDEX_4PLT);
+					}
+				break;
+				case _OSD_DM_2P_LR:
+					menuEnterPage(MENU_INDEX_V_1_SUB_2);
+				break;
+				case _OSD_DM_2P_TB:
+					menuEnterPage(MENU_INDEX_H_1_SUB_2);
+				break;
+				case _OSD_DM_2P_SACLE_LR:
+				break;
+				case _OSD_DM_2P_SACLE_TB:
+					menuEnterPage(MENU_INDEX_HORIZONTAL1_4_SPLIT);
+				break;
+				case _OSD_DM_3P_SACLE_TB:
+					menuEnterPage(MENU_INDEX_HORIZONTAL1_3_SPLIT);
+				break;
+				case _OSD_DM_2P_TOW_PORT_LR:
+					menuEnterPage(MENU_INDEX_VERTICAL1_2_SPLIT);
+				break;
+				case _OSD_DM_2P_TOW_PORT_TB:
+					menuEnterPage(MENU_INDEX_HORIZONTAL1_2_SPLIT);
+				break;
+			}
+			enableDispReflrshInputFormat();
+		break;
+#if 0
+		case KEY_M1:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_M1);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_M2:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_M2);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_M3:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_M3);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_M4:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_M4);
+			enableDispReflrshInputFormat();
+		break;
+#endif
+		case KEY_M1:
+			if(checkIsLock())
+			{
+				return;
+			}
+			#if defined(LING_XIN)
+			if(GetCurrentEnterNumberStatus())
+			{
+				menuProcessEvent(MENU_KEY_M1);
+			}
+			else
+			#endif
+			{
+
+			
+				disableDispReflrshInputFormat();
+				SetKeyLedMode(KEY_M1,LED_ON_ALWAYS);
+				SetKeyLedMode(KEY_M2,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M3,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M4,LED_OFF_ALWAYS);
+				if(GetPgmCurrentDisplayMode() == _OSD_DM_4P)
+				{
+					SetKeyLedMode(KEY_DVI,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI1,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI2,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_DP,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_VGA,LED_OFF_ALWAYS);
+					SetKeyLedMode(InputSourceToKey(GetPanleAndSplitParamRam()->inputSource1),LED_ON_ALWAYS);
+					menuEnterPage(MENU_INDEX_4PLT);
+				}
+				else
+				{
+					menuEnterPage(MENU_INDEX_OUTPUT0_Layer);
+				}
+				enableDispReflrshInputFormat();
+			}
+		break;
+		case KEY_M2:
+			if(checkIsLock())
+			{
+				return;
+			}
+			#if defined(LING_XIN)
+			if(GetCurrentEnterNumberStatus())
+			{
+				menuProcessEvent(MENU_KEY_M2);
+			}
+			else
+			#endif
+			{
+				disableDispReflrshInputFormat();
+				SetKeyLedMode(KEY_M2,LED_ON_ALWAYS);
+				SetKeyLedMode(KEY_M1,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M3,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M4,LED_OFF_ALWAYS);
+				if(GetPgmCurrentDisplayMode() == _OSD_DM_4P)
+				{
+					SetKeyLedMode(KEY_DVI,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI1,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI2,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_DP,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_VGA,LED_OFF_ALWAYS);
+					SetKeyLedMode(InputSourceToKey(GetPanleAndSplitParamRam()->inputSource2),LED_ON_ALWAYS);
+					menuEnterPage(MENU_INDEX_4PRT);
+				}
+				else
+				{
+					menuEnterPage(MENU_INDEX_OUTPUT1_Layer);
+				}
+				enableDispReflrshInputFormat();
+			}
+		break;
+		case KEY_M3:
+			if(checkIsLock())
+			{
+				return;
+			}
+			#if defined(LING_XIN)
+			if(GetCurrentEnterNumberStatus())
+			{
+				menuProcessEvent(MENU_KEY_M3);
+			}
+			else
+			#endif
+			{
+				disableDispReflrshInputFormat();
+				SetKeyLedMode(KEY_M3,LED_ON_ALWAYS);
+				SetKeyLedMode(KEY_M1,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M2,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M4,LED_OFF_ALWAYS);
+				if(GetPgmCurrentDisplayMode() == _OSD_DM_4P)
+				{
+					SetKeyLedMode(KEY_DVI,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI1,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI2,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_DP,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_VGA,LED_OFF_ALWAYS);
+					SetKeyLedMode(InputSourceToKey(GetPanleAndSplitParamRam()->inputSource3),LED_ON_ALWAYS);
+					menuEnterPage(MENU_INDEX_4PLB);
+				}
+				else
+				{
+					menuEnterPage(MENU_INDEX_OUTPUT2_Layer);
+				}
+				enableDispReflrshInputFormat();
+			}
+		break;
+		case KEY_M4:
+			if(checkIsLock() || GetCurrentEnterNumberStatus())
+				
+
+			{
+				menuProcessEvent(MENU_KEY_M4);
+			}
+			else
+			{
+				disableDispReflrshInputFormat()	;
+				SetKeyLedMode(KEY_M4,LED_ON_ALWAYS);
+				SetKeyLedMode(KEY_M1,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M2,LED_OFF_ALWAYS);
+				SetKeyLedMode(KEY_M3,LED_OFF_ALWAYS);
+				if(GetPgmCurrentDisplayMode() == _OSD_DM_4P)
+				{
+					SetKeyLedMode(KEY_DVI,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI1,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_HDMI2,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_DP,LED_OFF_ALWAYS);
+					SetKeyLedMode(KEY_VGA,LED_OFF_ALWAYS);
+					SetKeyLedMode(InputSourceToKey(GetPanleAndSplitParamRam()->inputSource4),LED_ON_ALWAYS);
+					menuEnterPage(MENU_INDEX_4PRB);
+				}
+				else
+				{
+					menuEnterPage(MENU_INDEX_OUTPUT3_Layer);
+				}
+				enableDispReflrshInputFormat();
+			}
+		break;
+		case KEY_LAYER_E:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_E);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_LAYER_F:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_F);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_LAYER_G:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_G);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_LAYER_H:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			menuProcessEvent(MENU_KEY_H);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_OUTPUT1:
+			if(checkIsLock() || GetCurrentEnterNumberStatus())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_OUTPUT1,LED_ON_ALWAYS);
+			menuProcessEvent(MENU_KEY_DVI1);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_OUTPUT2:
+			if(checkIsLock() || GetCurrentEnterNumberStatus())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_OUTPUT2,LED_ON_ALWAYS);
+			menuProcessEvent(MENU_KEY_DVI2);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_OUTPUT3:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_OUTPUT3,LED_ON_ALWAYS);
+			menuProcessEvent(MENU_KEY_DVI3);
+			enableDispReflrshInputFormat();
+		break;
+		case KEY_OUTPUT4:
+			if(checkIsLock())
+			{
+				return;
+			}
+			disableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_OUTPUT4,LED_ON_ALWAYS);
+			menuProcessEvent(MENU_KEY_DVI4);
+			enableDispReflrshInputFormat();
+		break;
+	case KEY_SEL:
+		if(checkIsLock())
+		{
+			return;
+		}
+		disableDispReflrshInputFormat();
+		menuProcessEvent(MENU_KEY_SELECT);
+		enableDispReflrshInputFormat();
+		break;
+	case KEY_TAKE:
+		if(checkIsLock())
+		{
+			return;
+		}
+		if((GetPgmCurrentDisplayMode() == _OSD_DM_2P_LR) || (GetPgmCurrentDisplayMode() == _OSD_DM_2P_TB))
+		{
+			SetKeyLedMode(KEY_TAKE,LED_ON_ALWAYS);
+			disableDispReflrshInputFormat();
+			TakeTask(GetSystemParam()->SysFadeTime);
+			takeStatus = !takeStatus;
+			enableDispReflrshInputFormat();
+			SetKeyLedMode(KEY_TAKE,LED_OFF_ALWAYS);
+		}
+		else// if(GetPgmCurrentDisplayMode() == _OSD_DM_2P_PIP)
+		{
+			menuEnterPage(MENU_INDEX_PIP);
+		}
+		default: 
+		break;
+	}
+}
+
+
+u32 KeyChange(u32 key)
+{
+	switch(key)
+	{
+		case 1:return KEY_DP;
+		case 2:return KEY_VGA;
+		case 3:return KEY_M4;
+		case 4:return KEY_TAKE;
+		case 5:return KEY_M3;
+		case 6:return KEY_SAVE;
+		case 7:return KEY_SEL;
+		case 8:return KEY_SCALE;
+		case 9:return KEY_SPLIT;
+		case 10:return KEY_MENU;
+		case 11:return KEY_M2;
+		case 12:return 0xff;
+		case 13:return KEY_M1;
+		case 14:return KEY_DVI;
+		case 15:return KEY_HDMI2;
+		case 16:return KEY_HDMI1;
+		default:return 0xff;
+	}
+}
+void task_processKey(void)
+{
+	u32 key_value;
+	u32 key_type;
+
+	key_value = get_key();
+	key_type = get_keyType();
+	
+	if((getProcessKeyEnable() == 0)&&((key_value&0x10000000) == 0))
+	{
+		return;
+	}	
+	if(task_rotaryEncoder() == TRUE)
+    {
+        return;
+    }
+	#if 1
+	if(get_keyPressHoldStatus())
+	{
+		set_keyPressHoldStatus(0);
+		if(key_value == KEY_MENU)
+		{
+			//printf("lock front panel,-->%d\r\n",GetSysTick());
+			if(getValue(keyLockValue))
+			{
+				menuProcessEvent(MENU_KEY_UNLOCK);
+			}
+			else
+			{
+				menuProcessEvent(MENU_KEY_LOCK);
+			}
+		}
+		return;
+	}
+	#endif
+	if((key_type == KEY_TYPE_CONTINUE) || (KEY_TYPE_DOWN == key_type))
+	{
+		//printf("key_value = %x,key_type = %d\r\n",key_value,key_type);
+		processKey_New(key_value);	
+	}
+	return;
+}
+
+
+
+

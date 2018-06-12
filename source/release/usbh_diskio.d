@@ -1,0 +1,11 @@
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\drivers\usbh_diskio.c
+..\release\usbh_diskio.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\ff_gen_drv.h
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\diskio.h
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\integer.h
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\ff.h
+..\release\usbh_diskio.o: ..\Libraries\FATFS\src\ffconf.h
+..\release\usbh_diskio.o: ..\Libraries\STM32_USB_HOST_Library\Core\inc\usbh_core.h
+..\release\usbh_diskio.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_hcd.h
+..\release\usbh_diskio.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_regs.h
+..\release\usbh_diskio.o: ..\usb\usb_conf.h

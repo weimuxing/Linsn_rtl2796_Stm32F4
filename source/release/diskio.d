@@ -1,0 +1,10 @@
+..\release\diskio.o: ..\Libraries\FATFS\src\diskio.c
+..\release\diskio.o: ..\Libraries\FATFS\src\diskio.h
+..\release\diskio.o: ..\Libraries\FATFS\src\integer.h
+..\release\diskio.o: ..\Libraries\FATFS\src\ff_gen_drv.h
+..\release\diskio.o: ..\Libraries\FATFS\src\ff.h
+..\release\diskio.o: ..\Libraries\FATFS\src\ffconf.h
+..\release\diskio.o: ..\Libraries\STM32_USB_HOST_Library\Core\inc\usbh_core.h
+..\release\diskio.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_hcd.h
+..\release\diskio.o: ..\Libraries\STM32_USB_OTG_Driver\inc\usb_regs.h
+..\release\diskio.o: ..\usb\usb_conf.h
