@@ -276,9 +276,9 @@ key_statusDef KB_Region_InputSource_keyStatus[8] =
         .id = 
         {
             .keyId = _SET_KB_HW_ID(D74HC165_CHIP_IDX_1,HC165_PIN7),
-            .ledId = _SET_KB_HW_ID(D74HC165_CHIP_IDX_2,_74HC595_PIN7),
+            .ledId = _SET_KB_HW_ID(D74HC165_CHIP_IDX_1,_74HC595_PIN7),
         },
-        .led.ledId = _SET_KB_HW_ID(D74HC165_CHIP_IDX_2,_74HC595_PIN7),
+        .led.ledId = _SET_KB_HW_ID(D74HC165_CHIP_IDX_1,_74HC595_PIN7),
         .led.rgb = 0,
 		.led.color = 0,
 		.led.mode = LED_OFF_ALWAYS,
@@ -636,6 +636,7 @@ void SetKeyLedMode(u32 keyValue,keyLed_Mode mode)
             {
                 //return status[j].key;
                 status[j].led.mode = mode;
+								return ;
             }
         }
 
@@ -739,7 +740,7 @@ void UpdateKeyLedStatus(void)
 	u8 bitOffset = 0;
 	u32 key_id;
 
-	for(u8 i = 1;i < 16;i++)
+	for(u8 i = 1;i <= 16;i++)
 	{
 		key_id = KeyVlaueToLedId(i);
 		ledMode = GetKeyLedMode(i);
@@ -766,12 +767,13 @@ void UpdateKeyLedStatus(void)
 		_GET_KB_HW_ID(key_id,chip,pin);
 		pdata = GetKeyLedDataBuf();
 		bitOffset = log2(pin);
+
 		if(bitState & 0x01)
 			pdata[chip-1].LedStatus &= ~(1 << bitOffset);
 		else
 			pdata[chip-1].LedStatus |= (1 << bitOffset);
 	}
-	
+
 }
 
 
